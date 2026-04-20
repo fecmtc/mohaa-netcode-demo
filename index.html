@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"%3E%3Crect width="64" height="64" rx="14" fill="%230f172a"/%3E%3Cpath d="M13 18h24l14 14-14 14H13l14-14z" fill="%23fb7185"/%3E%3Cpath d="M13 18h24l14 14-14 14H13l14-14z" fill="none" stroke="%2338bdf8" stroke-width="3" opacity=".85"/%3E%3Ccircle cx="18" cy="32" r="3" fill="%2334d399"/%3E%3Ccircle cx="32" cy="32" r="3" fill="%23facc15"/%3E%3Ccircle cx="46" cy="32" r="3" fill="%2322d3ee"/%3E%3C/svg%3E'>
+  <title>MOHAA Netcode Visualization</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+          },
+          boxShadow: {
+            glow: '0 0 40px rgba(59,130,246,.18)'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .world-grid {
+      background:
+        radial-gradient(circle at 20% 18%, rgba(59, 130, 246, 0.0), transparent 28%),
+        radial-gradient(circle at 80% 56%, rgba(236, 72, 153, 0.0), transparent 30%),
+        linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px),
+        #0f172a;
+      background-size: auto, auto, 32px 32px, 32px 32px, auto;
+    }
+
+    .triangle {
+      position: absolute;
+      width: 0;
+      height: 0;
+      border-top: 18px solid transparent;
+      border-bottom: 18px solid transparent;
+      border-left: 38px solid currentColor;
+      transform-origin: 19px 0px;
+      filter: drop-shadow(0 8px 12px rgba(0,0,0,.38));
+    }
+
+    .ghost-triangle {
+      position: absolute;
+      width: 0;
+      height: 0;
+      border-top: 15px solid transparent;
+      border-bottom: 15px solid transparent;
+      border-left: 32px solid currentColor;
+      transform-origin: 16px 0px;
+      opacity: .58;
+      filter: drop-shadow(0 6px 10px rgba(0,0,0,.3));
+    }
+
+    .packet {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 9999px;
+      box-shadow: 0 0 14px currentColor;
+      opacity: .95;
+    }
+
+    .trail-dot {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      border-radius: 9999px;
+      opacity: .45;
+    }
+
+    input[type="range"] {
+      accent-color: #38bdf8;
+    }
+
+    .stat-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      border-bottom: 1px solid rgba(148,163,184,.15);
+      padding: .38rem 0;
+    }
+
+    .pill {
+      border: 1px solid rgba(148,163,184,.28);
+      background: rgba(15,23,42,.54);
+      backdrop-filter: blur(10px);
+    }
+
+    .lane-label {
+      pointer-events: none;
+      position: absolute;
+      left: 1rem;
+      z-index: 20;
+      border-radius: 1rem;
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(2,6,23,.72);
+      padding: .65rem .9rem;
+      font-size: .875rem;
+      line-height: 1.35rem;
+      backdrop-filter: blur(12px);
+    }
+
+    .help {
+      cursor: help;
+      border-bottom: 1px dotted rgba(186,230,253,.7);
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+  <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <section class="mb-8 pt-4 overflow-hidden ">
+      <div class="relative">
+        <div class="absolute inset-0 -z-10"></div>
+        <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 class="text-4xl font-black tracking-tight text-white sm:text-5xl">
+              MOHAA Netcode Visualization
+            </h1>
+            <p class="mt-4 text-base leading-7 text-slate-300 sm:text-lg">
+              A two-part visualization: remote entity snapshot interpolation/extrapolation, plus local-player client-side prediction and server reconciliation.
+              It is intentionally simplified, but it now matches the important concepts more honestly.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-6 rounded-3xl border border-white/10 bg-white/[.04] p-5 shadow-xl shadow-black/20">
+      <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-xl font-black text-white">Controls</h2>
+          <p class="text-sm text-slate-400">Hover the dotted labels for plain-English explanations.</p>
+        </div>
+        <button id="resetBtn" class="w-fit rounded-xl bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 shadow-glow transition hover:bg-sky-300">
+          Reset simulation
+        </button>
+      </div>
+
+      <div class="grid gap-5 lg:grid-cols-3">
+        <div class="rounded-3xl border border-white/10 bg-slate-900/55 p-5">
+          <h3 class="mb-4 font-bold text-white">Simulation variables</h3>
+
+          <label class="mb-4 flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+            <span>
+              <span class="block font-semibold text-white help" title="When enabled, use arrow keys or WASD to control the local red player in the bottom lane. This helps you see client-side prediction and reconciliation.">Manual local input</span>
+              <span class="text-sm text-slate-400">Arrow keys / WASD.</span>
+            </span>
+            <input id="manualControl" type="checkbox" class="h-5 w-5 rounded" checked />
+          </label>
+
+          <div class="space-y-4">
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="remoteSpeed" class="font-medium text-slate-200 help" title="Speed of the remote/enemy entity in game units per second. Faster movement makes prediction and interpolation errors more visible.">Remote entity speed</label>
+                <span id="remoteSpeedValue" class="shrink-0 text-sky-200">150 units/s</span>
+              </div>
+              <input id="remoteSpeed" type="range" min="40" max="500" value="150" class="w-full" />
+            </div>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="directionChange" class="font-medium text-slate-200 help" title="How often the remote/enemy entity randomly changes direction. Frequent changes are harder for clients to smooth accurately.">Direction change</label>
+                <span id="directionChangeValue" class="shrink-0 text-sky-200">3.0s</span>
+              </div>
+              <input id="directionChange" type="range" min="0.5" max="10" step="0.5" value="3" class="w-full" />
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-3xl border border-white/10 bg-slate-900/55 p-5">
+          <h3 class="mb-4 font-bold text-white">Network variables</h3>
+          <div class="space-y-4">
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="ping" class="font-medium text-slate-200 help" title="Round-trip time between client and server. A 100ms ping means about 50ms each way. Higher ping increases the gap between what the server knows and what the client sees.">Ping / RTT</label>
+                <span id="pingValue" class="shrink-0 text-sky-200">200 ms</span>
+              </div>
+              <input id="ping" type="range" min="0" max="600" value="200" class="w-full" />
+            </div>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="packetLoss" class="font-medium text-slate-200 help" title="Percentage chance that a packet disappears. Lost server snapshots cause extrapolation or snapping; lost client command packets are partly helped by command duplication.">Packet loss</label>
+                <span id="packetLossValue" class="shrink-0 text-sky-200">0%</span>
+              </div>
+              <input id="packetLoss" type="range" min="0" max="100" value="0" class="w-full" />
+            </div>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="jitter" class="font-medium text-slate-200 help" title="Random variation in packet arrival time. Jitter does not directly shake the player; it makes updates arrive unevenly, which can cause more extrapolation or correction.">Jitter</label>
+                <span id="jitterValue" class="shrink-0 text-sky-200">0 ms</span>
+              </div>
+              <input id="jitter" type="range" min="0" max="150" value="0" class="w-full" />
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-3xl border border-white/10 bg-slate-900/55 p-5">
+          <h3 class="mb-4 font-bold text-white">Netcode variables</h3>
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="svFPS" class="font-medium text-slate-200 help" title="Server frames per second. In this demo it controls how often the authoritative server sends remote entity snapshots.">sv_fps</label>
+                <span id="svFPSValue" class="shrink-0 text-sky-200">20 FPS</span>
+              </div>
+              <input id="svFPS" type="range" min="5" max="60" value="20" class="w-full" />
+            </div>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="snaps" class="font-medium text-slate-200 help" title="Requested server snapshots per second. In MOHAA/OpenMOHAA this is a userinfo setting. It is not the same thing as client FPS or outgoing command packets.">snaps</label>
+                <span id="snapsValue" class="shrink-0 text-sky-200">20 snapshots/s</span>
+              </div>
+              <input id="snaps" type="range" min="5" max="60" value="20" class="w-full" />
+            </div>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="clMaxPackets" class="font-medium text-slate-200 help" title="Maximum outgoing client command packets per second. OpenMOHAA clamps this between 30 and 125. Higher values send your input to the server more often.">cl_maxpackets</label>
+                <span id="clMaxPacketsValue" class="shrink-0 text-sky-200">30 packets/s</span>
+              </div>
+              <input id="clMaxPackets" type="range" min="30" max="125" value="30" class="w-full" />
+            </div>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="clPacketDup" class="font-medium text-slate-200 help" title="How many previous user commands are repeated in each outgoing packet. This helps survive packet loss because missing commands may arrive inside a later packet.">cl_packetdup</label>
+                <span id="clPacketDupValue" class="shrink-0 text-sky-200">1</span>
+              </div>
+              <input id="clPacketDup" type="range" min="0" max="5" value="1" class="w-full" />
+            </div>
+
+            <label class="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+              <span>
+                <span class="block font-semibold text-white help" title="When enabled, the client smooths remote entities instead of snapping directly to each received server snapshot.">cg_smoothClients</span>
+                <span class="text-sm text-slate-400">Smooth remote entities.</span>
+              </span>
+              <input id="smoothClients" type="checkbox" class="h-5 w-5 rounded" checked />
+            </label>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="smoothTime" class="font-medium text-slate-200 help" title="Maximum time, in milliseconds, that the client may extrapolate a remote entity when it does not yet have a newer snapshot to interpolate toward.">cg_smoothClientsTime</label>
+                <span id="smoothTimeValue" class="shrink-0 text-sky-200">100 ms</span>
+              </div>
+              <input id="smoothTime" type="range" min="0" max="300" value="100" class="w-full" />
+            </div>
+
+            <div>
+              <div class="mb-1 flex justify-between gap-3 text-sm">
+                <label for="timeNudge" class="font-medium text-slate-200 help" title="Time offset for the client's view of server time. OpenMOHAA clamps this to -30..+30ms. Negative values render closer to the latest snapshot, which can reduce perceived latency but increases extrapolation risk.">cl_timeNudge</label>
+                <span id="timeNudgeValue" class="shrink-0 text-sky-200">0 ms</span>
+              </div>
+              <input id="timeNudge" type="range" min="-30" max="30" value="0" class="w-full" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-3xl border border-white/10 bg-white/[.04] p-4 shadow-2xl shadow-black/30 sm:p-5">
+      <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-xl font-black text-white">Live world</h2>
+          <p class="text-sm text-slate-400">Top lane: remote enemy snapshot smoothing. Bottom lane: local player prediction and reconciliation.</p>
+        </div>
+        <div class="flex flex-wrap gap-2 text-xs">
+          <span class="rounded-full bg-emerald-400/15 px-3 py-1 font-semibold text-emerald-200">Actual</span>
+          <span class="rounded-full bg-sky-400/15 px-3 py-1 font-semibold text-sky-200">Server</span>
+          <span class="rounded-full bg-rose-400/15 px-3 py-1 font-semibold text-rose-200">Client</span>
+          <span class="rounded-full bg-amber-400/15 px-3 py-1 font-semibold text-amber-200">Packets</span>
+        </div>
+      </div>
+
+      <div id="world" class="world-grid relative h-[820px] overflow-hidden rounded-[1.7rem] border border-white/10">
+        <div class="lane-label top-4">
+          <div class="font-bold text-white">Remote entity lane</div>
+        </div>
+
+        <div class="absolute bottom-[406px] left-0 right-0 border-t border-dashed border-white/10"></div>
+
+        <div class="lane-label top-[430px]">
+          <div class="font-bold text-white">Local player lane</div>
+        </div>
+
+        <div id="remoteActual" class="triangle text-emerald-400"></div>
+        <div id="remoteServer" class="ghost-triangle text-sky-400"></div>
+        <div id="remoteClient" class="triangle text-rose-400"></div>
+
+        <div id="localPredicted" class="triangle text-rose-400"></div>
+        <div id="localServer" class="ghost-triangle text-sky-400"></div>
+
+        <div id="packetsLayer" class="absolute inset-0"></div>
+        <div id="trailLayer" class="absolute inset-0"></div>
+
+        <div class="absolute bottom-0 left-0 right-0 border-t border-white/10 bg-slate-950/75 p-4 backdrop-blur">
+          <div class="grid gap-4 text-xs sm:grid-cols-3">
+            <div>
+              <div class="mb-1 font-bold text-slate-200">Legend</div>
+              <div class="flex flex-wrap gap-2">
+                <span class="text-emerald-300">▲ actual</span>
+                <span class="text-sky-300">▲ server</span>
+                <span class="text-rose-300">▲ client</span>
+              </div>
+            </div>
+            <div>
+              <div class="mb-1 font-bold text-slate-200">Packets</div>
+              <div class="flex flex-wrap gap-2">
+                <span class="text-amber-300">● client → server</span>
+                <span class="text-cyan-300">● server → client</span>
+                <span class="text-red-300">● lost</span>
+              </div>
+            </div>
+            <div>
+              <div class="mb-1 font-bold text-slate-200">Input</div>
+              <div class="text-slate-400">Arrow keys or WASD move the local predicted player.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mt-6 rounded-3xl border border-white/10 bg-white/[.04] p-5 shadow-xl shadow-black/20">
+      <h3 class="mb-3 text-lg font-bold">Stats</h3>
+      <div id="stats" class="grid gap-x-8 font-mono text-sm text-slate-300 md:grid-cols-2"></div>
+    </section>
+
+    <section class="mt-6 rounded-3xl border border-white/10 bg-white/[.04] p-5 shadow-xl shadow-black/20">
+      <h3 class="mb-3 text-lg font-bold">What this demo is, and is not</h3>
+      <div class="space-y-3 text-sm leading-6 text-slate-300">
+        <p>
+          <strong class="text-white">Remote entities:</strong> the red client marker is rendered from received server snapshots. When two snapshots bracket render time, it interpolates; when it runs out of future data, it extrapolates for a capped time.
+        </p>
+        <p>
+          <strong class="text-white">Local player:</strong> the red marker moves instantly from input. The server simulates delayed authoritative commands, then the client reconciles and replays unacknowledged commands.
+        </p>
+        <p>
+          <strong class="text-white">Simplification:</strong> real MOHAA/OpenMOHAA has full player physics, collision, delta-compressed snapshots, reliable commands, rate limits, and richer entity state. This is intentionally a visual model, not a protocol emulator.
+        </p>
+      </div>
+    </section>
+
+    <footer class="mt-8 p-5 text-sm text-slate-400">
+      <div class="font-bold text-slate-200">References</div>
+      <div class="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+        <a class="text-sky-300 hover:text-sky-200" href="https://www.gabrielgambetta.com/client-side-prediction-live-demo.html" target="_blank" rel="noopener">Gabriel Gambetta netcode series</a>
+        <a class="text-sky-300 hover:text-sky-200" href="https://github.com/openmoh/openmohaa" target="_blank" rel="noopener">OpenMOHAA source</a>
+        <a class="text-sky-300 hover:text-sky-200" href="https://www.pcgamer.com/netcode-explained/" target="_blank" rel="noopener">PC Gamer netcode overview</a>
+      </div>
+      <p class="mt-5 border-t border-white/10 pt-4">
+        Developed with ❤️ by <a class="font-semibold text-sky-300 hover:text-sky-200" href="https://mtreviso.github.io/" target="_blank" rel="noopener">mtc</a>
+      </p>
+    </footer>
+  </main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  const world = $('world');
+  const packetsLayer = $('packetsLayer');
+  const trailLayer = $('trailLayer');
+
+  const remoteActualEl = $('remoteActual');
+  const remoteServerEl = $('remoteServer');
+  const remoteClientEl = $('remoteClient');
+  const localPredictedEl = $('localPredicted');
+  const localServerEl = $('localServer');
+
+  const controls = {
+    manualControl: $('manualControl'),
+    remoteSpeed: $('remoteSpeed'),
+    directionChange: $('directionChange'),
+    ping: $('ping'),
+    packetLoss: $('packetLoss'),
+    jitter: $('jitter'),
+    svFPS: $('svFPS'),
+    snaps: $('snaps'),
+    clMaxPackets: $('clMaxPackets'),
+    clPacketDup: $('clPacketDup'),
+    smoothClients: $('smoothClients'),
+    smoothTime: $('smoothTime'),
+    timeNudge: $('timeNudge')
+  };
+
+  const labels = {
+    remoteSpeed: $('remoteSpeedValue'),
+    directionChange: $('directionChangeValue'),
+    ping: $('pingValue'),
+    packetLoss: $('packetLossValue'),
+    jitter: $('jitterValue'),
+    svFPS: $('svFPSValue'),
+    snaps: $('snapsValue'),
+    clMaxPackets: $('clMaxPacketsValue'),
+    clPacketDup: $('clPacketDupValue'),
+    smoothTime: $('smoothTimeValue'),
+    timeNudge: $('timeNudgeValue')
+  };
+
+  const config = {
+    remoteSpeed: 150,
+    directionChange: 3,
+    ping: 200,
+    packetLoss: 0,
+    jitter: 0,
+    svFPS: 20,
+    snaps: 20,
+    clMaxPackets: 30,
+    clPacketDup: 1,
+    smoothClients: true,
+    smoothTime: 100,
+    timeNudge: 0,
+    localSpeed: 210
+  };
+
+  const bounds = () => ({
+    minX: 42,
+    maxX: world.clientWidth - 58,
+    remoteMinY: 106,
+    remoteMaxY: 365,
+    localMinY: 512,
+    localMaxY: world.clientHeight - 118
+  });
+
+  function makeState() {
+    return {
+      time: 0,
+      lastFrame: 0,
+      lastRemoteDirectionChange: 0,
+      lastRemoteSnapshot: 0,
+      lastLocalCmdPacket: 0,
+      commandSeq: 0,
+
+      remoteActual: { x: 180, y: 200, vx: 1, vy: 0 },
+      remoteServer: { x: 180, y: 200, vx: 1, vy: 0 },
+      remoteClient: { x: 180, y: 200, vx: 1, vy: 0 },
+
+      localPredicted: { x: 180, y: 625, vx: 0, vy: 0 },
+      localServer: { x: 180, y: 625, vx: 0, vy: 0 },
+
+      remoteSnapshots: [],
+      commands: [],
+      serverCommandQueue: [],
+      packets: [],
+      trails: [],
+
+      remoteLastUpdate: 0,
+      localLastReconcile: 0,
+      packetsSent: 0,
+      packetsLost: 0,
+      s2cPacketsSent: 0,
+      s2cPacketsLost: 0,
+      c2sPacketsSent: 0,
+      c2sPacketsLost: 0,
+      jitteredPackets: 0,
+      reconciliationCount: 0,
+      localCorrectionDistance: 0,
+      remoteErrorAvg: 0,
+      localErrorAvg: 0
+    };
+  }
+
+  let sim = makeState();
+  const input = { left: false, right: false, up: false, down: false };
+
+  function syncConfig() {
+    config.remoteSpeed = Number(controls.remoteSpeed.value);
+    config.directionChange = Number(controls.directionChange.value);
+    config.ping = Number(controls.ping.value);
+    config.packetLoss = Number(controls.packetLoss.value);
+    config.jitter = Number(controls.jitter.value);
+    config.svFPS = Number(controls.svFPS.value);
+    config.snaps = Math.min(Number(controls.snaps.value), config.svFPS);
+    controls.snaps.value = config.snaps;
+    config.clMaxPackets = Number(controls.clMaxPackets.value);
+    config.clPacketDup = Number(controls.clPacketDup.value);
+    config.smoothClients = controls.smoothClients.checked;
+    config.smoothTime = Number(controls.smoothTime.value);
+    config.timeNudge = Math.max(-30, Math.min(30, Number(controls.timeNudge.value)));
+    controls.timeNudge.value = config.timeNudge;
+
+    labels.remoteSpeed.textContent = `${config.remoteSpeed} units/s`;
+    labels.directionChange.textContent = `${config.directionChange.toFixed(1)}s`;
+    labels.ping.textContent = `${config.ping} ms`;
+    labels.packetLoss.textContent = `${config.packetLoss}%`;
+    labels.jitter.textContent = `${config.jitter} ms`;
+    labels.svFPS.textContent = `${config.svFPS} FPS`;
+    labels.snaps.textContent = `${config.snaps} snapshots/s`;
+    labels.clMaxPackets.textContent = `${config.clMaxPackets} packets/s`;
+    labels.clPacketDup.textContent = `${config.clPacketDup}`;
+    labels.smoothTime.textContent = `${config.smoothTime} ms`;
+    labels.timeNudge.textContent = `${config.timeNudge} ms`;
+  }
+
+  Object.values(controls).forEach((el) => {
+    el.addEventListener('input', syncConfig);
+    el.addEventListener('change', syncConfig);
+  });
+
+  $('resetBtn').addEventListener('click', reset);
+
+  function reset() {
+    packetsLayer.innerHTML = '';
+    trailLayer.innerHTML = '';
+    sim = makeState();
+    syncConfig();
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function distance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function copyPos(p) {
+    return { x: p.x, y: p.y, vx: p.vx, vy: p.vy };
+  }
+
+  function bounceEntity(p, lane) {
+    const b = bounds();
+    const minY = lane === 'remote' ? b.remoteMinY : b.localMinY;
+    const maxY = lane === 'remote' ? b.remoteMaxY : b.localMaxY;
+
+    if (p.x < b.minX) { p.x = b.minX; p.vx *= -1; }
+    if (p.x > b.maxX) { p.x = b.maxX; p.vx *= -1; }
+    if (p.y < minY) { p.y = minY; p.vy *= -1; }
+    if (p.y > maxY) { p.y = maxY; p.vy *= -1; }
+  }
+
+  function applyVelocity(p, dtMs, speed, lane) {
+    p.x += p.vx * speed * dtMs / 1000;
+    p.y += p.vy * speed * dtMs / 1000;
+    bounceEntity(p, lane);
+  }
+
+  function createPacket({ from, to, y, startTime, oneWayMs, direction, payload }) {
+    const lost = Math.random() < config.packetLoss / 100;
+    let arrivalTime = startTime + oneWayMs;
+
+    if (!lost && config.jitter > 0) {
+      const offset = (Math.random() * 2 - 1) * config.jitter;
+      arrivalTime = Math.max(startTime + 1, arrivalTime + offset);
+      if (Math.abs(offset) > 1) sim.jitteredPackets++;
+    }
+
+    sim.packetsSent++;
+    if (direction === 's2c') sim.s2cPacketsSent++;
+    if (direction === 'c2s') sim.c2sPacketsSent++;
+
+    if (lost) {
+      sim.packetsLost++;
+      if (direction === 's2c') sim.s2cPacketsLost++;
+      if (direction === 'c2s') sim.c2sPacketsLost++;
+    }
+
+    const el = document.createElement('div');
+    el.className = 'packet';
+    el.style.color = lost ? '#f87171' : (direction === 's2c' ? '#22d3ee' : '#f59e0b');
+    el.style.backgroundColor = 'currentColor';
+    packetsLayer.appendChild(el);
+
+    sim.packets.push({
+      from,
+      to,
+      y,
+      startTime,
+      arrivalTime,
+      direction,
+      payload,
+      lost,
+      processed: false,
+      el
+    });
+  }
+
+  function createTrail(x, y, color) {
+    if (sim.trails.length > 180) {
+      const oldest = sim.trails.shift();
+      oldest.el.remove();
+    }
+
+    const el = document.createElement('div');
+    el.className = 'trail-dot';
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.style.backgroundColor = color;
+    trailLayer.appendChild(el);
+
+    sim.trails.push({ born: sim.time, el });
+  }
+
+  function updateTrails() {
+    sim.trails = sim.trails.filter((t) => {
+      const age = sim.time - t.born;
+      if (age > 2500) {
+        t.el.remove();
+        return false;
+      }
+      t.el.style.opacity = String(clamp(0.45 * (1 - age / 2500), 0, 0.45));
+      return true;
+    });
+  }
+
+  function processPackets() {
+    sim.packets = sim.packets.filter((p) => {
+      if (sim.time >= p.startTime && sim.time <= p.arrivalTime) {
+        const f = (sim.time - p.startTime) / Math.max(1, p.arrivalTime - p.startTime);
+        p.el.style.left = `${p.from + (p.to - p.from) * f}px`;
+        p.el.style.top = `${p.y}px`;
+      }
+
+      if (!p.processed && sim.time >= p.arrivalTime) {
+        p.processed = true;
+
+        if (!p.lost) {
+          if (p.direction === 's2c' && p.payload.type === 'remoteSnapshot') {
+            sim.remoteSnapshots.push(p.payload.snapshot);
+            sim.remoteLastUpdate = sim.time;
+          }
+
+          if (p.direction === 'c2s' && p.payload.type === 'localCommands') {
+            p.payload.commands.forEach((cmd) => {
+              sim.serverCommandQueue.push(cmd);
+            });
+          }
+
+          if (p.direction === 's2c' && p.payload.type === 'authoritativeLocal') {
+            reconcileLocal(p.payload.state, p.payload.lastProcessedSeq);
+          }
+        }
+      }
+
+      if (sim.time > p.arrivalTime + 500) {
+        p.el.remove();
+        return false;
+      }
+
+      if (p.lost && sim.time > p.startTime + Math.max(60, (p.arrivalTime - p.startTime) * 0.35)) {
+        p.el.style.opacity = '0.28';
+      }
+
+      return true;
+    });
+  }
+
+  function handleRemote(dtMs) {
+    if (sim.time - sim.lastRemoteDirectionChange > config.directionChange * 1000) {
+      sim.lastRemoteDirectionChange = sim.time;
+      const angle = Math.random() * Math.PI * 2;
+      sim.remoteActual.vx = Math.cos(angle);
+      sim.remoteActual.vy = Math.sin(angle);
+    }
+
+    applyVelocity(sim.remoteActual, dtMs, config.remoteSpeed, 'remote');
+
+    const snapshotInterval = 1000 / Math.min(config.svFPS, config.snaps);
+    if (sim.time - sim.lastRemoteSnapshot >= snapshotInterval) {
+      sim.lastRemoteSnapshot = sim.time;
+
+      sim.remoteServer = copyPos(sim.remoteActual);
+      const snapshot = {
+        serverTime: sim.time,
+        position: copyPos(sim.remoteServer)
+      };
+
+      createPacket({
+        from: sim.remoteServer.x,
+        to: sim.remoteClient.x,
+        y: sim.remoteServer.y,
+        startTime: sim.time,
+        oneWayMs: config.ping / 2,
+        direction: 's2c',
+        payload: { type: 'remoteSnapshot', snapshot }
+      });
+    }
+
+    updateRemoteClient();
+  }
+
+  function updateRemoteClient() {
+    const snaps = sim.remoteSnapshots.filter(s => sim.time - s.serverTime < 5000);
+    sim.remoteSnapshots = snaps;
+
+    if (!snaps.length) return;
+
+    if (!config.smoothClients || snaps.length === 1) {
+      const latest = snaps[snaps.length - 1];
+      const extrapolateMs = clamp(
+        sim.time - (latest.serverTime + config.ping / 2) - config.timeNudge,
+        0,
+        config.smoothTime
+      );
+
+      sim.remoteClient.x = latest.position.x + latest.position.vx * config.remoteSpeed * extrapolateMs / 1000;
+      sim.remoteClient.y = latest.position.y + latest.position.vy * config.remoteSpeed * extrapolateMs / 1000;
+      sim.remoteClient.vx = latest.position.vx;
+      sim.remoteClient.vy = latest.position.vy;
+      bounceEntity(sim.remoteClient, 'remote');
+      return;
+    }
+
+    const renderTime = sim.time - config.ping / 2 - config.timeNudge;
+    let previous = null;
+    let next = null;
+
+    for (let i = 0; i < snaps.length - 1; i++) {
+      if (snaps[i].serverTime <= renderTime && renderTime <= snaps[i + 1].serverTime) {
+        previous = snaps[i];
+        next = snaps[i + 1];
+        break;
+      }
+    }
+
+    if (previous && next) {
+      const total = Math.max(1, next.serverTime - previous.serverTime);
+      const f = clamp((renderTime - previous.serverTime) / total, 0, 1);
+
+      sim.remoteClient.x = previous.position.x + f * (next.position.x - previous.position.x);
+      sim.remoteClient.y = previous.position.y + f * (next.position.y - previous.position.y);
+      sim.remoteClient.vx = previous.position.vx + f * (next.position.vx - previous.position.vx);
+      sim.remoteClient.vy = previous.position.vy + f * (next.position.vy - previous.position.vy);
+      return;
+    }
+
+    const latest = snaps[snaps.length - 1];
+    const extrapolateMs = clamp(renderTime - latest.serverTime, 0, config.smoothTime);
+    sim.remoteClient.x = latest.position.x + latest.position.vx * config.remoteSpeed * extrapolateMs / 1000;
+    sim.remoteClient.y = latest.position.y + latest.position.vy * config.remoteSpeed * extrapolateMs / 1000;
+    sim.remoteClient.vx = latest.position.vx;
+    sim.remoteClient.vy = latest.position.vy;
+    bounceEntity(sim.remoteClient, 'remote');
+  }
+
+  function getInputVector() {
+    let dx = 0;
+    let dy = 0;
+    if (input.left) dx -= 1;
+    if (input.right) dx += 1;
+    if (input.up) dy -= 1;
+    if (input.down) dy += 1;
+
+    const len = Math.hypot(dx, dy);
+    if (!len) return { vx: 0, vy: 0 };
+    return { vx: dx / len, vy: dy / len };
+  }
+
+  function simulateCommandOnState(state, cmd) {
+    const dtMs = Math.max(0, cmd.dtMs);
+    state.vx = cmd.vx;
+    state.vy = cmd.vy;
+    applyVelocity(state, dtMs, config.localSpeed, 'local');
+  }
+
+  function handleLocalPrediction(dtMs) {
+    const vector = controls.manualControl.checked ? getInputVector() : autoLocalInput();
+    sim.commandSeq++;
+
+    const cmd = {
+      seq: sim.commandSeq,
+      time: sim.time,
+      dtMs,
+      vx: vector.vx,
+      vy: vector.vy
+    };
+
+    simulateCommandOnState(sim.localPredicted, cmd);
+    sim.commands.push(cmd);
+    sim.commands = sim.commands.filter(c => c.seq > sim.commandSeq - 256);
+
+    const packetInterval = 1000 / config.clMaxPackets;
+    if (sim.time - sim.lastLocalCmdPacket >= packetInterval) {
+      sim.lastLocalCmdPacket = sim.time;
+
+      const commandCount = Math.min(1 + config.clPacketDup, sim.commands.length);
+      const cmds = sim.commands.slice(-commandCount);
+
+      createPacket({
+        from: sim.localPredicted.x,
+        to: sim.localServer.x,
+        y: sim.localPredicted.y + 22,
+        startTime: sim.time,
+        oneWayMs: config.ping / 2,
+        direction: 'c2s',
+        payload: { type: 'localCommands', commands: cmds }
+      });
+    }
+
+    processServerCommands();
+  }
+
+  function autoLocalInput() {
+    const t = sim.time / 1000;
+    return { vx: Math.cos(t * 1.1), vy: Math.sin(t * 0.9) };
+  }
+
+  function processServerCommands() {
+    if (!sim.serverCommandQueue.length) return;
+
+    sim.serverCommandQueue.sort((a, b) => a.seq - b.seq);
+
+    const seen = new Set();
+    const deduped = [];
+    for (const cmd of sim.serverCommandQueue) {
+      if (!seen.has(cmd.seq)) {
+        seen.add(cmd.seq);
+        deduped.push(cmd);
+      }
+    }
+    sim.serverCommandQueue = [];
+
+    let lastSeq = 0;
+    deduped.forEach((cmd) => {
+      if (cmd.seq > lastSeq) lastSeq = cmd.seq;
+      simulateCommandOnState(sim.localServer, cmd);
+    });
+
+    if (lastSeq > 0) {
+      createPacket({
+        from: sim.localServer.x,
+        to: sim.localPredicted.x,
+        y: sim.localServer.y - 24,
+        startTime: sim.time,
+        oneWayMs: config.ping / 2,
+        direction: 's2c',
+        payload: {
+          type: 'authoritativeLocal',
+          lastProcessedSeq: lastSeq,
+          state: copyPos(sim.localServer)
+        }
+      });
+    }
+  }
+
+  function reconcileLocal(authoritativeState, lastProcessedSeq) {
+    const before = copyPos(sim.localPredicted);
+
+    sim.localPredicted = copyPos(authoritativeState);
+    sim.commands = sim.commands.filter(cmd => cmd.seq > lastProcessedSeq);
+    sim.commands.forEach(cmd => simulateCommandOnState(sim.localPredicted, cmd));
+
+    sim.localCorrectionDistance = distance(before, sim.localPredicted);
+    sim.localLastReconcile = sim.time;
+    sim.reconciliationCount++;
+  }
+
+  function updateElement(el, p) {
+    const angle = Math.atan2(p.vy, p.vx) * 180 / Math.PI;
+    el.style.left = `${p.x}px`;
+    el.style.top = `${p.y}px`;
+    el.style.transform = `translate(-50%, -50%) rotate(${Number.isFinite(angle) ? angle : 0}deg)`;
+  }
+
+  function updateStats() {
+    const remoteErr = distance(sim.remoteActual, sim.remoteClient) / Math.max(1, world.clientWidth);
+    const localErr = distance(sim.localServer, sim.localPredicted) / Math.max(1, world.clientWidth);
+
+    sim.remoteErrorAvg = 0.92 * sim.remoteErrorAvg + 0.08 * remoteErr;
+    sim.localErrorAvg = 0.92 * sim.localErrorAvg + 0.08 * localErr;
+
+    const lossPct = sim.packetsSent ? (sim.packetsLost / sim.packetsSent * 100).toFixed(1) : '0.0';
+    const s2cLossPct = sim.s2cPacketsSent ? (sim.s2cPacketsLost / sim.s2cPacketsSent * 100).toFixed(1) : '0.0';
+    const c2sLossPct = sim.c2sPacketsSent ? (sim.c2sPacketsLost / sim.c2sPacketsSent * 100).toFixed(1) : '0.0';
+
+    $('stats').innerHTML = `
+      <div class="stat-line"><span>Time</span><strong>${(sim.time / 1000).toFixed(1)}s</strong></div>
+      <div class="stat-line"><span>Remote error avg</span><strong>${(sim.remoteErrorAvg * 100).toFixed(2)}%</strong></div>
+      <div class="stat-line"><span>Local prediction delta avg</span><strong>${(sim.localErrorAvg * 100).toFixed(2)}%</strong></div>
+      <div class="stat-line"><span>Last reconciliation correction</span><strong>${sim.localCorrectionDistance.toFixed(2)} units</strong></div>
+      <div class="stat-line"><span>Reconciliations</span><strong>${sim.reconciliationCount}</strong></div>
+      <div class="stat-line"><span>Packets sent</span><strong>${sim.packetsSent}</strong></div>
+      <div class="stat-line"><span>Total loss</span><strong>${sim.packetsLost} (${lossPct}%)</strong></div>
+      <div class="stat-line"><span>Server → client loss</span><strong>${sim.s2cPacketsLost} (${s2cLossPct}%)</strong></div>
+      <div class="stat-line"><span>Client → server loss</span><strong>${sim.c2sPacketsLost} (${c2sLossPct}%)</strong></div>
+      <div class="stat-line"><span>Jittered packets</span><strong>${sim.jitteredPackets}</strong></div>
+      <div class="stat-line"><span>Remote snapshots buffered</span><strong>${sim.remoteSnapshots.length}</strong></div>
+      <div class="stat-line"><span>Unacknowledged local cmds</span><strong>${sim.commands.length}</strong></div>
+    `;
+  }
+
+  function render() {
+    updateElement(remoteActualEl, sim.remoteActual);
+    updateElement(remoteServerEl, sim.remoteServer);
+    updateElement(remoteClientEl, sim.remoteClient);
+    updateElement(localPredictedEl, sim.localPredicted);
+    updateElement(localServerEl, sim.localServer);
+
+    if (Math.floor(sim.time / 90) !== Math.floor((sim.time - 16) / 90)) {
+      createTrail(sim.remoteActual.x, sim.remoteActual.y, '#34d399');
+      createTrail(sim.remoteClient.x, sim.remoteClient.y, '#fb7185');
+      createTrail(sim.localPredicted.x, sim.localPredicted.y, '#fb7185');
+    }
+
+    updateTrails();
+    updateStats();
+  }
+
+  function loop(now) {
+    if (!sim.lastFrame) sim.lastFrame = now;
+    const dtMs = Math.min(50, Math.max(1, now - sim.lastFrame));
+    sim.lastFrame = now;
+    sim.time += dtMs;
+
+    handleRemote(dtMs);
+    handleLocalPrediction(dtMs);
+    processPackets();
+    render();
+
+    requestAnimationFrame(loop);
+  }
+
+  function onKey(e, down) {
+    const key = e.key.toLowerCase();
+    const isMove =
+      key === 'arrowleft' || key === 'a' ||
+      key === 'arrowright' || key === 'd' ||
+      key === 'arrowup' || key === 'w' ||
+      key === 'arrowdown' || key === 's';
+
+    if (!isMove) return;
+    if (controls.manualControl.checked) e.preventDefault();
+
+    if (key === 'arrowleft' || key === 'a') input.left = down;
+    if (key === 'arrowright' || key === 'd') input.right = down;
+    if (key === 'arrowup' || key === 'w') input.up = down;
+    if (key === 'arrowdown' || key === 's') input.down = down;
+  }
+
+  window.addEventListener('keydown', (e) => onKey(e, true), { passive: false });
+  window.addEventListener('keyup', (e) => onKey(e, false), { passive: false });
+  window.addEventListener('resize', () => render());
+
+  syncConfig();
+  render();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
